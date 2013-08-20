@@ -67,8 +67,11 @@ static void kfdns_send_tc_packet(struct sk_buff *in_skb, uint dst_ip, uint dst_p
 	struct sk_buff *nskb;
 	struct iphdr *iph;
 	struct udphdr *udph;
-	nskb = alloc_skb(sizeof(struct iphdr) + sizeof(struct udphdr) +
-			LL_MAX_HEADER + DNS_HEADER_SIZE, GFP_ATOMIC);
+	int udp_len;
+
+	udp_len = sizeof(struct udphdr) + DNS_HEADER_SIZE;	
+	nskb = alloc_skb(sizeof(struct iphdr) + udp_len +
+			LL_MAX_HEADER, GFP_ATOMIC);
 	if (!nskb) {
 		printk(KERN_ERR "kfdns: Error, can`t allocate memory to DNS reply\n");
 		return;
@@ -84,7 +87,7 @@ static void kfdns_send_tc_packet(struct sk_buff *in_skb, uint dst_ip, uint dst_p
 	iph->protocol	= IPPROTO_UDP;
 	iph->saddr	= src_ip;
 	iph->daddr	= dst_ip;
-	iph->tot_len	= htons(sizeof(struct udphdr) + sizeof(struct iphdr) + DNS_HEADER_SIZE);
+	iph->tot_len	= htons(sizeof(struct iphdr) + udp_len);
 	iph->check	= 0;
 	iph->check	= ip_fast_csum((unsigned char *)iph, iph->ihl);
 	
@@ -92,8 +95,7 @@ static void kfdns_send_tc_packet(struct sk_buff *in_skb, uint dst_ip, uint dst_p
 	memset(udph, 0, sizeof(*udph));
 	udph->source = htons(53);
 	udph->dest = dst_port;
-	udph->len = htons(sizeof(struct udphdr) + DNS_HEADER_SIZE);
-
+	udph->len = htons(udp_len);
 	skb_dst_set(nskb, dst_clone(skb_dst(in_skb)));
 	nskb->protocol	= htons(ETH_P_IP);
 	if(ip_route_me_harder(nskb, RTN_UNSPEC))
@@ -101,6 +103,10 @@ static void kfdns_send_tc_packet(struct sk_buff *in_skb, uint dst_ip, uint dst_p
 	ndata = (char *)skb_put(nskb, DNS_HEADER_SIZE);
 	memcpy(ndata, data, DNS_HEADER_SIZE); //copy header from query
 	*(ndata + 2) |= 0x82; //set responce and tc bits
+	udph->check = 0;
+	udph->check = csum_tcpudp_magic(src_ip, dst_ip,
+			udp_len, IPPROTO_UDP,
+			csum_partial(udph, udp_len, 0));
 	nf_ct_attach(nskb, in_skb);	
 	ip_local_out(nskb);
 	return;		
