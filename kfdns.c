@@ -372,15 +372,15 @@ static int kfdns_proc_read(char *page, char **start, off_t off,
 	int len = 0;
 	unsigned long flags;
 	struct rb_node *n;
-	read_lock_irqsave(&rwlock, flags);
-	n = rb_first(&kfdns_blockedip_tree);
 	if (off > 0) {
 		*eof = 1;
 		return 0;
 	}
+	read_lock_irqsave(&rwlock, flags);
+	n = rb_first(&kfdns_blockedip_tree);
 	while (n) {
 		node_data = rb_entry(n, struct blockedip_tree_node, node);
-		len+= sprintf(page, "%pI4    %ud\n", &node_data->ip, node_data->counter);
+		len+= sprintf(page, "%pI4    %u\n", &node_data->ip, node_data->counter);
 		n = rb_next(n);
 	}
 	read_unlock_irqrestore(&rwlock, flags);
