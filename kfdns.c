@@ -14,7 +14,7 @@
 #include <linux/udp.h>
 #include <net/ip.h>
 
-#define KFDNS_STAT_WINDOW 16
+#define KFDNS_STAT_WINDOW 16384
 #define KFDNS_PROCFS_STAT "kfdns"
 #define DNS_HEADER_SIZE 12
 
@@ -40,8 +40,8 @@ static struct rb_root kfdns_blockedip_tree = RB_ROOT;
 static DEFINE_SPINLOCK(rec_lock);
 static DEFINE_RWLOCK(rwlock);
 static struct proc_dir_entry *kfdns_proc_file;
+static int threshold = 1000;
 
-static const int threshold = 10;
 /*  
  *  DNS HEADER:
  *
@@ -390,7 +390,7 @@ static int kfdns_proc_read(char *page, char **start, off_t off,
 static int kfdns_init(void)
 {
 	int err;
-	printk(KERN_INFO "Starting kfdns module\n");
+	printk(KERN_INFO "Starting kfdns module, threshold = %d \n", threshold);
 	kfdns_counter_thread = kthread_run(kfdns_counter_fn, NULL, "kfdns_counter_thread");
 	if (IS_ERR(kfdns_counter_thread)) {
 		printk(KERN_ERR "kfdns: creating thread failed\n");
@@ -424,6 +424,9 @@ static void kfdns_exit(void)
 
 module_init(kfdns_init);
 module_exit(kfdns_exit);
+
+module_param(threshold, int, 0);
+MODULE_PARM_DESC(threshold, "Max number of reuests from one IP passed to dns");
 
 MODULE_AUTHOR("Daniil Cherednik <dan.cherednik@gmail.com>");
 MODULE_DESCRIPTION("filter DNS requests");
