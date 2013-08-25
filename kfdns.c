@@ -98,8 +98,6 @@ static void kfdns_send_tc_packet(struct sk_buff *in_skb, uint dst_ip, uint dst_p
 	udph->len = htons(udp_len);
 	skb_dst_set(nskb, dst_clone(skb_dst(in_skb)));
 	nskb->protocol	= htons(ETH_P_IP);
-	if(ip_route_me_harder(nskb, RTN_UNSPEC))
-		goto free_nskb;
 	ndata = (char *)skb_put(nskb, DNS_HEADER_SIZE);
 	memcpy(ndata, data, DNS_HEADER_SIZE); //copy header from query
 	*(ndata + 2) |= 0x82; //set responce and tc bits
@@ -107,6 +105,8 @@ static void kfdns_send_tc_packet(struct sk_buff *in_skb, uint dst_ip, uint dst_p
 	udph->check = csum_tcpudp_magic(src_ip, dst_ip,
 			udp_len, IPPROTO_UDP,
 			csum_partial(udph, udp_len, 0));
+	if(ip_route_me_harder(nskb, RTN_UNSPEC))
+		goto free_nskb;
 	nf_ct_attach(nskb, in_skb);	
 	ip_local_out(nskb);
 	return;		
