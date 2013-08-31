@@ -6,6 +6,7 @@
 #include <linux/rbtree.h>
 #include <linux/delay.h>
 #include <linux/proc_fs.h>
+#include <linux/seq_file.h>
 
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv4.h>
@@ -39,7 +40,6 @@ static struct rb_root ipstat_tree = RB_ROOT;
 static struct rb_root kfdns_blockedip_tree = RB_ROOT;
 static DEFINE_SPINLOCK(rec_lock);
 static DEFINE_RWLOCK(rwlock);
-static struct proc_dir_entry *kfdns_proc_file;
 static int threshold = 1000;
 
 /*  
@@ -365,42 +365,97 @@ static uint kfdns_packet_hook(uint hooknum,
 	return NF_ACCEPT;
 }
 
-static int kfdns_proc_read(char *page, char **start, off_t off,
-				int count, int *eof, void *data)
+static void *kfdns_seq_start(struct seq_file *seq, loff_t *pos)
 {
-	struct blockedip_tree_node *node_data;
-	int len = 0;
-	unsigned long flags;
-	struct rb_node *n;
-	if (off > 0) {
-		*eof = 1;
-		return 0;
-	}
-	read_lock_irqsave(&rwlock, flags);
-	n = rb_first(&kfdns_blockedip_tree);
-	while (n) {
-		node_data = rb_entry(n, struct blockedip_tree_node, node);
-		len+= sprintf(page, "%pI4    %u\n", &node_data->ip, node_data->counter);
-		n = rb_next(n);
-	}
-	read_unlock_irqrestore(&rwlock, flags);
-	return len;
+	struct rb_node *node;
+	int n = *pos;
+	int i;
+	read_lock_irq(&rwlock);
+	if (n == 0)
+		return SEQ_START_TOKEN;
+
+	node = rb_first(&kfdns_blockedip_tree);
+	for (i = 0; node && i < n; i++)
+		node = rb_next(node);
+	return node;
 }
+
+static void *kfdns_seq_next(struct seq_file *s, void *v, loff_t *pos)
+{
+	struct rb_node *node = v;
+
+	(*pos)++;
+
+	if (v == SEQ_START_TOKEN)
+		return rb_first(&kfdns_blockedip_tree);
+	
+	return rb_next(node);
+}
+
+static void kfdns_seq_stop(struct seq_file *s, void *v)
+{
+	read_unlock_irq(&rwlock);
+}
+
+static int kfdns_seq_show(struct seq_file *seq, void *v)
+{
+	struct blockedip_tree_node *l = container_of(v, struct blockedip_tree_node, node);
+	if (v == SEQ_START_TOKEN) {
+		 seq_puts(seq, "IP        counter\n");
+	} else {
+		seq_printf(seq, "%pI4    %u\n", &l->ip, l->counter);
+	}
+	return 0;
+}
+
+static const struct seq_operations kfdns_seq_ops = {
+	.start  = kfdns_seq_start,
+	.next   = kfdns_seq_next,
+	.stop   = kfdns_seq_stop,
+	.show   = kfdns_seq_show,
+};
+
+static int kfdns_seq_open(struct inode *inode, struct file *file)
+{
+	return seq_open_net(inode, file, &kfdns_seq_ops,
+		sizeof(struct neigh_seq_state));
+}
+
+static const struct file_operations kfdns_seq_fops = {
+	.owner		= THIS_MODULE,
+	.open		= kfdns_seq_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= seq_release_net,
+};
+
+static int kfdns_net_init(struct net *net)
+{
+	if (!proc_net_fops_create(net, KFDNS_PROCFS_STAT, S_IRUGO, &kfdns_seq_fops))
+		return -ENOMEM;
+	return 0;
+}
+
+static void kfdns_net_exit(struct net *net)
+{
+	proc_net_remove(net, KFDNS_PROCFS_STAT);
+}
+
+static struct pernet_operations kfdns_net_ops = {
+	.init = kfdns_net_init,
+	.exit = kfdns_net_exit,
+};
 
 static int kfdns_init(void)
 {
 	int err;
 	printk(KERN_INFO "Starting kfdns module, threshold = %d \n", threshold);
+	register_pernet_subsys(&kfdns_net_ops);
 	kfdns_counter_thread = kthread_run(kfdns_counter_fn, NULL, "kfdns_counter_thread");
 	if (IS_ERR(kfdns_counter_thread)) {
 		printk(KERN_ERR "kfdns: creating thread failed\n");
 		err = PTR_ERR(kfdns_counter_thread);
 		return err;
-	}
-	kfdns_proc_file = create_proc_read_entry(KFDNS_PROCFS_STAT, 0400, NULL, kfdns_proc_read, NULL);
-	if (kfdns_proc_file == NULL) {
-		printk(KERN_ERR "kfdns: Unable to create procfs entry");
-		return -EIO;
 	}
 	bundle.hook = kfdns_packet_hook;
 	bundle.owner = THIS_MODULE;
@@ -417,8 +472,7 @@ static void kfdns_exit(void)
 	nf_unregister_hook(&bundle);
 	rb_ipstat_find_and_free();
 	kfdns_blockedip_tree_free();
-	if (kfdns_proc_file)
-		remove_proc_entry(KFDNS_PROCFS_STAT, NULL);
+	unregister_pernet_subsys(&kfdns_net_ops);
 	printk(KERN_INFO "Stoping kfdns module\n");
 }
 
