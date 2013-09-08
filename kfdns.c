@@ -125,16 +125,14 @@ static int kfdns_check_dns_header(unsigned char *data, uint len)
 	return 1; //request
 }
 
-static void kfdns_blockedip_tree_insert(uint ip, uint count)
+static int kfdns_blockedip_tree_insert(uint ip, uint count)
 {
 	struct rb_node **link = &kfdns_blockedip_tree.rb_node;
-	struct rb_node *parent;
+	struct rb_node *parent = NULL;
 	struct blockedip_tree_node *data;
 	struct blockedip_tree_node *new;
 	int len;
 	unsigned long flags;
-	local_bh_disable();
-	write_lock_irqsave(&rwlock, flags);
 	while(*link) {
 		parent = *link;
 		data = rb_entry(parent, struct blockedip_tree_node, node);
@@ -143,18 +141,22 @@ static void kfdns_blockedip_tree_insert(uint ip, uint count)
 		else if (ip > data->ip)
 			link = &(*link)->rb_right;
 		else
-			goto out;
+			return 0;
 	}
 	len = sizeof(struct blockedip_tree_node);
 	new = kzalloc(len, GFP_KERNEL);
+	if (new == NULL)
+		return -ENOMEM;
+	local_bh_disable();
+	write_lock_irqsave(&rwlock, flags);
 	new->ip = ip;
 	new->counter = count;
 //	printk(KERN_INFO "kfdns: ip: %i blocked for DNS requests via UDP", new->ip);
 	rb_link_node(&new->node, parent, link);
 	rb_insert_color(&new->node, &kfdns_blockedip_tree);
-out:
 	write_unlock_irqrestore(&rwlock, flags);
 	local_bh_enable();
+	return 0;
 }
 
 static void kfdns_blockedip_tree_free(void)
@@ -229,7 +231,7 @@ static void kfdns_blockedip_tree_del_ip(uint ip)
 static struct ipstat_tree_node *rb_ipstat_insert_and_count(uint ip)
 {
 	struct rb_node **link = &ipstat_tree.rb_node;
-	struct rb_node *parent;
+	struct rb_node *parent = NULL;
 	struct ipstat_tree_node *data;
 	struct ipstat_tree_node *new;
 	int len;
@@ -256,7 +258,7 @@ static struct ipstat_tree_node *rb_ipstat_insert_and_count(uint ip)
 	return new;
 }
 
-static void rb_ipstat_find_and_free(void)
+static int rb_ipstat_find_and_free(void)
 {
 	struct rb_node *n = ipstat_tree.rb_node;
 	struct rb_node *parent;
@@ -274,7 +276,8 @@ static void rb_ipstat_find_and_free(void)
 		data = rb_entry(n, struct ipstat_tree_node, node);
 		if (data) {
 			if (data->counter > threshold) {
-				kfdns_blockedip_tree_insert(data->ip, data->counter);
+				if (kfdns_blockedip_tree_insert(data->ip, data->counter) < 0)
+					return -ENOMEM;
 			} else {
 				//TODO: implement hysteresis, or something more interested
 				kfdns_blockedip_tree_del_ip(data->ip);
@@ -284,7 +287,7 @@ static void rb_ipstat_find_and_free(void)
 		}
 		n = parent;
 	}
-
+	return 0;
 }
 
 
@@ -302,7 +305,7 @@ static int kfdns_update_stat(void)
 	spin_unlock_irqrestore(&rec_lock, flags);
 	local_bh_enable();
 	if (err == 0)
-		rb_ipstat_find_and_free();
+		return rb_ipstat_find_and_free();
 	return err;
 }
 
