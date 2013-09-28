@@ -434,14 +434,14 @@ static const struct file_operations kfdns_seq_fops = {
 
 static int kfdns_net_init(struct net *net)
 {
-	if (!proc_net_fops_create(net, KFDNS_PROCFS_STAT, S_IRUGO, &kfdns_seq_fops))
+	if (!proc_create(KFDNS_PROCFS_STAT, S_IRUGO, net->proc_net, &kfdns_seq_fops))
 		return -ENOMEM;
 	return 0;
 }
 
 static void kfdns_net_exit(struct net *net)
 {
-	proc_net_remove(net, KFDNS_PROCFS_STAT);
+	remove_proc_entry(KFDNS_PROCFS_STAT, net->proc_net);
 }
 
 static struct pernet_operations kfdns_net_ops = {
