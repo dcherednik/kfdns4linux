@@ -84,6 +84,8 @@ static void kfdns_send_tc_packet(struct sk_buff *in_skb, uint dst_ip, uint dst_p
 	iph->ihl	= sizeof(struct iphdr) / 4;
 	iph->ttl	= 64;
 	iph->tos	= 0;
+	iph->id		= 0;
+	iph->frag_off	= htons(IP_DF);
 	iph->protocol	= IPPROTO_UDP;
 	iph->saddr	= src_ip;
 	iph->daddr	= dst_ip;
