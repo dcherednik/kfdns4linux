@@ -107,7 +107,6 @@ static void kfdns_send_tc_packet(struct sk_buff *in_skb, uint dst_ip, uint dst_p
 			csum_partial(udph, udp_len, 0));
 	if(ip_route_me_harder(nskb, RTN_UNSPEC))
 		goto free_nskb;
-	nf_ct_attach(nskb, in_skb);	
 	ip_local_out(nskb);
 	return;		
 	
