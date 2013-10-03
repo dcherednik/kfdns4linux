@@ -7,6 +7,10 @@
 #include <linux/delay.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/percpu.h>
+#include <linux/cpu.h>
+
+#include <linux/kfifo-new.h>
 
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv4.h>
@@ -15,7 +19,7 @@
 #include <linux/udp.h>
 #include <net/ip.h>
 
-#define KFDNS_STAT_WINDOW 16384
+#define KFDNS_STAT_WINDOW 8192
 #define KFDNS_PROCFS_STAT "kfdns"
 #define DNS_HEADER_SIZE 12
 
@@ -32,13 +36,15 @@ struct blockedip_tree_node {
 	uint counter;
 };
 
+struct raw_counter {
+	DECLARE_KFIFO(fifo, uint, KFDNS_STAT_WINDOW);
+};
 
 static struct task_struct *kfdns_counter_thread;
 static struct nf_hook_ops bundle;
-static uint ips[KFDNS_STAT_WINDOW];
+static struct raw_counter __percpu *raw_counter_pcpu;
 static struct rb_root ipstat_tree = RB_ROOT;
 static struct rb_root kfdns_blockedip_tree = RB_ROOT;
-static DEFINE_SPINLOCK(rec_lock);
 static DEFINE_RWLOCK(rwlock);
 static int threshold = 1000;
 
@@ -294,31 +300,43 @@ static int rb_ipstat_find_and_free(void)
 
 static int kfdns_update_stat(void)
 {
-	unsigned long flags;
-	unsigned long i;
 	int err = 0;
+	int ip = 0;
+	int got;
+	int cpu;
+	struct raw_counter *p;
 	local_bh_disable();
-	spin_lock_irqsave(&rec_lock, flags);
-	for(i = 0;i < KFDNS_STAT_WINDOW; i++) {
-		if(!rb_ipstat_insert_and_count(ips[i]))
-			err = -ENOMEM;	
+	preempt_disable();
+	get_online_cpus();
+	for_each_online_cpu(cpu) {
+		p = per_cpu_ptr(raw_counter_pcpu, cpu);
+		for(;;) {
+			got = kfifo_get(&p->fifo, &ip);
+			if(!rb_ipstat_insert_and_count(ip)) {
+				err = -ENOMEM;
+				break;
+			}
+			if (!got)
+				break;
+		}
+		if (err)
+			break;
 	}
-	spin_unlock_irqrestore(&rec_lock, flags);
+	put_online_cpus();
+	preempt_enable();
 	local_bh_enable();
 	if (err == 0)
 		return rb_ipstat_find_and_free();
 	return err;
 }
 
-static int kfdns_add_ip(uint ip)
+static void kfdns_add_ip(uint ip)
 {
-	unsigned long flags;
-	static unsigned int n = 0;	
-	spin_lock_irqsave(&rec_lock, flags);
-	ips[n % KFDNS_STAT_WINDOW] = ip;
-	n++;
-	spin_unlock_irqrestore(&rec_lock, flags);
-	return 0;
+	struct raw_counter *p;
+	p = get_cpu_ptr(raw_counter_pcpu);
+	kfifo_put(&p->fifo, &ip);
+	put_cpu_ptr(raw_counter_pcpu);
+	return;
 }
 
 static int kfdns_counter_fn(void *data)
@@ -450,15 +468,46 @@ static struct pernet_operations kfdns_net_ops = {
 	.exit = kfdns_net_exit,
 };
 
+static int kfdns_raw_counter_init(void)
+{
+	int cpu;
+	struct raw_counter *p;
+	raw_counter_pcpu = alloc_percpu(struct raw_counter);
+	if (!raw_counter_pcpu) {
+		printk(KERN_ERR "kfdns: memory allocation for raw_counter_pcpu failed\n");
+		return -ENOMEM;
+	}
+	get_online_cpus();
+	preempt_disable();
+        for_each_online_cpu(cpu) {
+		p = per_cpu_ptr(raw_counter_pcpu, cpu);
+		INIT_KFIFO(p->fifo);
+	}
+	preempt_enable();
+	put_online_cpus();
+	return 0;
+}
+
+static int kfdns_raw_counter_free(void)
+{
+	if (raw_counter_pcpu)
+		free_percpu(raw_counter_pcpu);
+	raw_counter_pcpu = NULL;
+	return 0;
+}
+
 static int kfdns_init(void)
 {
 	int err;
 	printk(KERN_INFO "Starting kfdns module, threshold = %d \n", threshold);
+	if ((err = kfdns_raw_counter_init()))
+		return err;	
 	register_pernet_subsys(&kfdns_net_ops);
 	kfdns_counter_thread = kthread_run(kfdns_counter_fn, NULL, "kfdns_counter_thread");
 	if (IS_ERR(kfdns_counter_thread)) {
 		printk(KERN_ERR "kfdns: creating thread failed\n");
 		err = PTR_ERR(kfdns_counter_thread);
+		kfdns_raw_counter_free();
 		return err;
 	}
 	bundle.hook = kfdns_packet_hook;
@@ -477,6 +526,7 @@ static void kfdns_exit(void)
 	rb_ipstat_find_and_free();
 	kfdns_blockedip_tree_free();
 	unregister_pernet_subsys(&kfdns_net_ops);
+	kfdns_raw_counter_free();
 	printk(KERN_INFO "Stoping kfdns module\n");
 }
 
