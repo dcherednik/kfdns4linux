@@ -9,8 +9,12 @@
 #include <linux/seq_file.h>
 #include <linux/percpu.h>
 #include <linux/cpu.h>
-
+#include <linux/version.h>
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,32)
 #include <linux/kfifo-new.h>
+#else
+#include <linux/kfifo.h>
+#endif
 
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv4.h>
