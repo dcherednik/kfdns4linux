@@ -373,7 +373,6 @@ static int kfdns_counter_fn(void *data)
 			break;
 		if ((err = kfdns_update_stat())) {
 			printk(KERN_ERR "kfdns: error while counting stats, err: %i\n", err);
-			return err;
 		}
 	}
 	return 0;
