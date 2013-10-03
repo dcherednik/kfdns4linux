@@ -265,7 +265,7 @@ static struct ipstat_tree_node *rb_ipstat_insert_and_count(uint ip)
 	return new;
 }
 
-static int rb_ipstat_find_and_free(void)
+static int rb_ipstat_fire(void)
 {
 	struct rb_node *n = ipstat_tree.rb_node;
 	struct rb_node *parent;
@@ -297,6 +297,30 @@ static int rb_ipstat_find_and_free(void)
 	return 0;
 }
 
+static int rb_ipstat_free(void)
+{
+	struct rb_node *n = ipstat_tree.rb_node;
+	struct rb_node *parent;
+	struct ipstat_tree_node *data;
+	while (n) {
+		if (n->rb_left) {
+			n = n->rb_left;
+			continue;
+		}
+		if (n->rb_right) {
+			n = n->rb_right;
+			continue;
+		}
+		parent = rb_parent(n);
+		data = rb_entry(n, struct ipstat_tree_node, node);
+		if (data) {
+			rb_erase(&data->node, &ipstat_tree);
+			kfree(data);
+		}
+		n = parent;
+	}
+	return 0;
+}
 
 static int kfdns_update_stat(void)
 {
@@ -326,7 +350,7 @@ static int kfdns_update_stat(void)
 	preempt_enable();
 	local_bh_enable();
 	if (err == 0)
-		return rb_ipstat_find_and_free();
+		return rb_ipstat_fire();
 	return err;
 }
 
@@ -523,7 +547,7 @@ static void kfdns_exit(void)
 {
 	kthread_stop(kfdns_counter_thread); 
 	nf_unregister_hook(&bundle);
-	rb_ipstat_find_and_free();
+	rb_ipstat_free();
 	kfdns_blockedip_tree_free();
 	unregister_pernet_subsys(&kfdns_net_ops);
 	kfdns_raw_counter_free();
