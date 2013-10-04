@@ -51,6 +51,7 @@ static struct rb_root ipstat_tree = RB_ROOT;
 static struct rb_root kfdns_blockedip_tree = RB_ROOT;
 static DEFINE_RWLOCK(rwlock);
 static int threshold = 1000;
+static int period = 100;
 
 /*  
  *  DNS HEADER:
@@ -370,7 +371,7 @@ static int kfdns_counter_fn(void *data)
 	int err;
 	for(;;) {
 		set_current_state(TASK_INTERRUPTIBLE);
-		msleep(1000);
+		msleep(period);
 		if (kthread_should_stop())
 			break;
 		if ((err = kfdns_update_stat())) {
@@ -524,9 +525,13 @@ static int kfdns_raw_counter_free(void)
 static int kfdns_init(void)
 {
 	int err;
-	printk(KERN_INFO "Starting kfdns module, threshold = %d \n", threshold);
+	if (period <= 0 || period > 1000) {
+		printk(KERN_INFO "kfdns: period should be in range 1 ... 1000, forcing default value 100 \n");
+		period = 100;
+	}
+	printk(KERN_INFO "Starting kfdns module, threshold = %d, period = %d, HZ = %d \n", threshold, period, HZ);
 	if ((err = kfdns_raw_counter_init()))
-		return err;	
+		return err;
 	register_pernet_subsys(&kfdns_net_ops);
 	kfdns_counter_thread = kthread_run(kfdns_counter_fn, NULL, "kfdns_counter_thread");
 	if (IS_ERR(kfdns_counter_thread)) {
@@ -559,7 +564,9 @@ module_init(kfdns_init);
 module_exit(kfdns_exit);
 
 module_param(threshold, int, 0);
-MODULE_PARM_DESC(threshold, "Max number of reuests from one IP passed to dns");
+MODULE_PARM_DESC(threshold, "Number of reuests from one IP passed to dns per one period");
+module_param(period, int, 0);
+MODULE_PARM_DESC(period, "Time between counting collected stats, ms");
 
 MODULE_AUTHOR("Daniil Cherednik <dan.cherednik@gmail.com>");
 MODULE_DESCRIPTION("filter DNS requests");
