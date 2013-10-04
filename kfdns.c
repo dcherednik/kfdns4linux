@@ -340,12 +340,12 @@ static int kfdns_update_stat(void)
 		p = per_cpu_ptr(raw_counter_pcpu, cpu);
 		for(;;) {
 			got = kfifo_get(&p->fifo, &ip);
+			if (!got)
+				break;
 			if(!rb_ipstat_insert_and_count(ip)) {
 				err = -ENOMEM;
 				break;
 			}
-			if (!got)
-				break;
 		}
 		if (err)
 			break;
