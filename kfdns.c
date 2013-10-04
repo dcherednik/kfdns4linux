@@ -23,7 +23,7 @@
 #include <linux/udp.h>
 #include <net/ip.h>
 
-#define KFDNS_STAT_WINDOW 8192
+#define KFDNS_STAT_WINDOW 4096
 #define KFDNS_PROCFS_STAT "kfdns"
 #define DNS_HEADER_SIZE 12
 
