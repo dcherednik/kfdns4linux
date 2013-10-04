@@ -333,7 +333,6 @@ static int kfdns_update_stat(void)
 	int got;
 	int cpu;
 	struct raw_counter *p;
-	local_bh_disable();
 	preempt_disable();
 	get_online_cpus();
 	for_each_online_cpu(cpu) {
@@ -352,7 +351,6 @@ static int kfdns_update_stat(void)
 	}
 	put_online_cpus();
 	preempt_enable();
-	local_bh_enable();
 	if (err == 0)
 		return rb_ipstat_fire();
 	return err;
