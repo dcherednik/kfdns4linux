@@ -114,6 +114,7 @@ static void kfdns_send_tc_packet(struct sk_buff *in_skb, uint dst_ip, uint dst_p
 	ndata = (char *)skb_put(nskb, DNS_HEADER_SIZE);
 	memcpy(ndata, data, DNS_HEADER_SIZE); //copy header from query
 	*(ndata + 2) |= 0x82; //set responce and tc bits
+	*(u16*)(ndata + 4) = 0;  //set questions = 0 to prevent warning on client side
 	udph->check = 0;
 	udph->check = csum_tcpudp_magic(src_ip, dst_ip,
 			udp_len, IPPROTO_UDP,
