@@ -52,6 +52,7 @@ static struct rb_root kfdns_blockedip_tree = RB_ROOT;
 static DEFINE_RWLOCK(rwlock);
 static int threshold = 1000;
 static int period = 100;
+static int hysteresis;
 
 /*  
  *  DNS HEADER:
@@ -288,11 +289,10 @@ static int rb_ipstat_fire(void)
 		parent = rb_parent(n);
 		data = rb_entry(n, struct ipstat_tree_node, node);
 		if (data) {
-			if (data->counter > threshold) {
+			if (data->counter >= threshold) {
 				if (kfdns_blockedip_tree_insert(data->ip, data->counter) < 0)
 					return -ENOMEM;
-			} else {
-				//TODO: implement hysteresis, or something more interested
+			} else if (data->counter < threshold - hysteresis) {
 				kfdns_blockedip_tree_del_ip(data->ip);
 			}
 			rb_erase(&data->node, &ipstat_tree);
@@ -530,7 +530,10 @@ static int kfdns_init(void)
 		printk(KERN_INFO "kfdns: period should be in range 1 ... 1000, forcing default value 100 \n");
 		period = 100;
 	}
-	printk(KERN_INFO "Starting kfdns module, threshold = %d, period = %d, HZ = %d \n", threshold, period, HZ);
+	if (hysteresis <= 0 || hysteresis > threshold) {
+		hysteresis = threshold / 10;
+	}
+	printk(KERN_INFO "Starting kfdns module, threshold = %d, period = %d, hysteresis = %d, HZ = %d \n", threshold, period, hysteresis, HZ);
 	if ((err = kfdns_raw_counter_init()))
 		return err;
 	register_pernet_subsys(&kfdns_net_ops);
@@ -568,6 +571,8 @@ module_param(threshold, int, 0);
 MODULE_PARM_DESC(threshold, "Number of reuests from one IP passed to dns per one period");
 module_param(period, int, 0);
 MODULE_PARM_DESC(period, "Time between counting collected stats, ms");
+module_param(hysteresis, int, 0);
+MODULE_PARM_DESC(hysteresis, "Hysteresis");
 
 MODULE_AUTHOR("Daniil Cherednik <dan.cherednik@gmail.com>");
 MODULE_DESCRIPTION("filter DNS requests");
