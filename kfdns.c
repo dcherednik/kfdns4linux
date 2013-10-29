@@ -52,6 +52,7 @@ static struct rb_root kfdns_blockedip_tree = RB_ROOT;
 static DEFINE_RWLOCK(rwlock);
 static int threshold = 1000;
 static int period = 100;
+static bool noop;
 static int hysteresis;
 
 /*  
@@ -404,7 +405,7 @@ static uint kfdns_packet_hook(uint hooknum,
 				if (kfdns_check_dns_header(data, datalen) != 1)
 					return NF_DROP;
 				kfdns_add_ip(ip->saddr);
-				if (kfdns_blockedip_tree_search(ip->saddr)) {
+				if (kfdns_blockedip_tree_search(ip->saddr) && (noop == 0)) {
 					kfdns_send_tc_packet(skb, ip->saddr, udp->source, ip->daddr, data);
 					return NF_DROP;
 				}
@@ -573,6 +574,8 @@ module_param(period, int, 0);
 MODULE_PARM_DESC(period, "Time between counting collected stats, ms");
 module_param(hysteresis, int, 0);
 MODULE_PARM_DESC(hysteresis, "Hysteresis");
+module_param(noop, bool, 0);
+MODULE_PARM_DESC(noop, "No Operations mode");
 
 MODULE_AUTHOR("Daniil Cherednik <dan.cherednik@gmail.com>");
 MODULE_DESCRIPTION("filter DNS requests");
