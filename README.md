@@ -12,8 +12,8 @@ Attacker will not use TCP and his requests will be ignored.
 
 Tested with:
 
-CentOS 6 (2.6.32 kernel)
-Gentoo (3.10 kernel)
+- CentOS 6 (2.6.32 kernel)
+- Gentoo (3.10 kernel)
    
 
 Building from source:
@@ -25,10 +25,14 @@ Using:
 
     #insmod kfdns.ko threshold=100 period=100
 
-You see list of "bad" IP
+to use this filter with forwarding traffic add "forward" keyword
+
+You can see list of "bad" IPs
     
     #cat /proc/net/kfdns
 
 Limitation:
+
     1. Only IPv4
-    2. Can work only on the servers with DNS server software
+
+

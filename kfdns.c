@@ -52,6 +52,7 @@ static struct rb_root kfdns_blockedip_tree = RB_ROOT;
 static DEFINE_RWLOCK(rwlock);
 static int threshold = 1000;
 static int period = 100;
+static bool forward;
 static int hysteresis;
 
 /*  
@@ -547,8 +548,11 @@ static int kfdns_init(void)
 	bundle.hook = kfdns_packet_hook;
 	bundle.owner = THIS_MODULE;
 	bundle.pf = PF_INET;
-//	bundle.hooknum = NF_INET_PRE_ROUTING;
-	bundle.hooknum = NF_INET_LOCAL_IN;
+	if (forward) {
+		bundle.hooknum = NF_INET_FORWARD;
+	} else {
+		bundle.hooknum = NF_INET_LOCAL_IN;
+	}
 	bundle.priority = NF_IP_PRI_FIRST;
 	nf_register_hook(&bundle);
 	return 0;
@@ -573,6 +577,8 @@ module_param(period, int, 0);
 MODULE_PARM_DESC(period, "Time between counting collected stats, ms");
 module_param(hysteresis, int, 0);
 MODULE_PARM_DESC(hysteresis, "Hysteresis");
+module_param(forward, bool, 0);
+MODULE_PARM_DESC(forward, "Use hook NF_INET_FORWARD instead of NF_INET_LOCAL_IN");
 
 MODULE_AUTHOR("Daniil Cherednik <dan.cherednik@gmail.com>");
 MODULE_DESCRIPTION("filter DNS requests");
