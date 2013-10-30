@@ -394,6 +394,7 @@ static uint kfdns_packet_hook(uint hooknum,
 	struct udphdr *udp;
 	unsigned char *data;
 	unsigned int datalen;
+	int query;
 	if (skb->protocol == htons(ETH_P_IP)) {
 		ip = (struct iphdr *)skb_network_header(skb);
 		if (ip->version == 4 && ip->protocol == IPPROTO_UDP) {
@@ -403,7 +404,8 @@ static uint kfdns_packet_hook(uint hooknum,
 				datalen = skb->len - sizeof(struct iphdr) - sizeof(struct udphdr);
 				data = skb->data + sizeof(struct udphdr) + sizeof(struct iphdr);
 				//Drop packet if it hasn`t got valid dns query header
-				if (kfdns_check_dns_header(data, datalen) != 1)
+				query = kfdns_check_dns_header(data, datalen);
+				if (query < 0 || (query == 0 && forward == 0))
 					return NF_DROP;
 				kfdns_add_ip(ip->saddr);
 				if (kfdns_blockedip_tree_search(ip->saddr) && (noop == 0)) {
