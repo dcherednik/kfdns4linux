@@ -24,6 +24,7 @@
 #include <net/ip.h>
 
 #define KFDNS_STAT_WINDOW 4096
+#define KFDNS_PERIOD_MAX 1000
 #define KFDNS_PROCFS_STAT "kfdns"
 #define DNS_HEADER_SIZE 12
 
@@ -54,6 +55,152 @@ static int period = 100;
 static bool forward;
 static bool noop;
 static int hysteresis;
+
+#ifdef CONFIG_SYSFS
+static ssize_t kfdns_threshold_show(struct kobject *kobj,
+				    struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%u\n", threshold);
+}
+
+static ssize_t kfdns_period_show(struct kobject *kobj,
+				 struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%u\n", period);
+}
+
+static ssize_t kfdns_hysteresis_show(struct kobject *kobj,
+				     struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%u\n", hysteresis);
+}
+
+static ssize_t kfdns_noop_show(struct kobject *kobj,
+			       struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", noop);
+}
+
+static ssize_t kfdns_forward_show(struct kobject *kobj,
+				  struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%d\n", forward);
+}
+
+static ssize_t kfdns_threshold_store(struct kobject *kobj,
+				     struct kobj_attribute *attr,
+				     const char *buf, size_t count)
+{
+	int err;
+	unsigned long tmp;
+
+	err = kstrtoul(buf, 10, &tmp);
+	if (err || !tmp || tmp < hysteresis)
+		return -EINVAL;
+
+	threshold = tmp;
+
+	return count;
+}
+
+static ssize_t kfdns_period_store(struct kobject *kobj,
+				  struct kobj_attribute *attr,
+				  const char *buf, size_t count)
+{
+	int err;
+	unsigned long tmp;
+
+	err = kstrtoul(buf, 10, &tmp);
+	if (err || !tmp || tmp > KFDNS_PERIOD_MAX)
+		return -EINVAL;
+
+	period = tmp;
+
+	return count;
+}
+
+static ssize_t kfdns_hysteresis_store(struct kobject *kobj,
+				      struct kobj_attribute *attr,
+				      const char *buf, size_t count)
+{
+	int err;
+	unsigned long tmp;
+
+	err = kstrtoul(buf, 10, &tmp);
+	if (err || !tmp || tmp > threshold)
+		return -EINVAL;
+
+	hysteresis = tmp;
+
+	return count;
+}
+
+static ssize_t kfdns_noop_store(struct kobject *kobj,
+				struct kobj_attribute *attr,
+				const char *buf, size_t count)
+{
+	int err;
+	unsigned long tmp;
+
+	err = kstrtoul(buf, 10, &tmp);
+	if (err || !tmp || tmp > 1)
+		return -EINVAL;
+
+	noop = tmp;
+
+	return count;
+}
+
+static ssize_t kfdns_forward_store(struct kobject *kobj,
+				   struct kobj_attribute *attr,
+				   const char *buf, size_t count)
+{
+	int err;
+	unsigned long tmp;
+
+	err = kstrtoul(buf, 10, &tmp);
+	if (err || !tmp || tmp > 1)
+		return -EINVAL;
+
+	forward = tmp;
+
+	return count;
+}
+
+static struct kobj_attribute kfdns_threshold_attr =
+__ATTR(threshold, 0644, kfdns_threshold_show,
+       kfdns_threshold_store);
+
+static struct kobj_attribute kfdns_period_attr =
+__ATTR(period, 0644, kfdns_period_show,
+       kfdns_period_store);
+
+static struct kobj_attribute kfdns_hysteresis_attr =
+__ATTR(hysteresis, 0644, kfdns_hysteresis_show,
+       kfdns_hysteresis_store);
+
+static struct kobj_attribute kfdns_noop_attr =
+__ATTR(noop, 0644, kfdns_noop_show,
+       kfdns_noop_store);
+
+static struct kobj_attribute kfdns_forward_attr =
+__ATTR(forward, 0644, kfdns_forward_show,
+       kfdns_forward_store);
+
+static struct attribute *kfdns_attrs[] = {
+	&kfdns_threshold_attr.attr,
+	&kfdns_period_attr.attr,
+	&kfdns_hysteresis_attr.attr,
+	&kfdns_noop_attr.attr,
+	&kfdns_forward_attr.attr,
+	NULL,
+};
+
+static struct attribute_group kfdns_attr_group = {
+	.attrs = kfdns_attrs,
+	.name = "kfdns",
+};
+#endif
 
 /*  
  *  DNS HEADER:
@@ -545,9 +692,10 @@ static int kfdns_raw_counter_free(void)
 static int kfdns_init(void)
 {
 	int err;
-	if (period <= 0 || period > 1000) {
+	if (period <= 0 || period > KFDNS_PERIOD_MAX) {
 		printk(KERN_INFO
-		       "kfdns: period should be in range 1 ... 1000, forcing default value 100 \n");
+		       "kfdns: period should be in range 1 ... %u, forcing default value 100 \n",
+		       KFDNS_PERIOD_MAX);
 		period = 100;
 	}
 	if (hysteresis <= 0 || hysteresis > threshold) {
@@ -557,15 +705,20 @@ static int kfdns_init(void)
 	       "Starting kfdns module, threshold = %d, period = %d, hysteresis = %d, HZ = %d \n",
 	       threshold, period, hysteresis, HZ);
 	if ((err = kfdns_raw_counter_init()))
-		return err;
-	register_pernet_subsys(&kfdns_net_ops);
+		goto out_err;
+	if ((err = register_pernet_subsys(&kfdns_net_ops)))
+		goto out_err_free1;
+
+#ifdef CONFIG_SYSFS
+	if ((err = sysfs_create_group(kernel_kobj, &kfdns_attr_group)))
+		goto out_err_free2;
+#endif
 	kfdns_counter_thread =
 	    kthread_run(kfdns_counter_fn, NULL, "kfdns_counter_thread");
 	if (IS_ERR(kfdns_counter_thread)) {
-		printk(KERN_ERR "kfdns: creating thread failed\n");
-		err = PTR_ERR(kfdns_counter_thread);
-		kfdns_raw_counter_free();
-		return err;
+		printk(KERN_ERR "kfdns: creating thread failed, err: %li \n",
+		       PTR_ERR(kfdns_counter_thread));
+		goto out_err_free3;
 	}
 	bundle.hook = kfdns_packet_hook;
 	bundle.owner = THIS_MODULE;
@@ -578,6 +731,17 @@ static int kfdns_init(void)
 	bundle.priority = NF_IP_PRI_FIRST;
 	nf_register_hook(&bundle);
 	return 0;
+
+out_err_free3:
+#ifdef CONFIG_SYSFS
+	sysfs_remove_group(kernel_kobj, &kfdns_attr_group);
+#endif
+out_err_free2:
+	unregister_pernet_subsys(&kfdns_net_ops);
+out_err_free1:
+	kfdns_raw_counter_free();
+out_err:
+	return -ENOMEM;
 }
 
 static void kfdns_exit(void)
@@ -586,6 +750,9 @@ static void kfdns_exit(void)
 	nf_unregister_hook(&bundle);
 	rb_ipstat_free();
 	kfdns_blockedip_tree_free();
+#ifdef CONFIG_SYSFS
+	sysfs_remove_group(kernel_kobj, &kfdns_attr_group);
+#endif
 	unregister_pernet_subsys(&kfdns_net_ops);
 	kfdns_raw_counter_free();
 	printk(KERN_INFO "Stoping kfdns module\n");
@@ -593,7 +760,6 @@ static void kfdns_exit(void)
 
 module_init(kfdns_init);
 module_exit(kfdns_exit);
-
 module_param(threshold, int, 0);
 MODULE_PARM_DESC(threshold,
 		 "Number of reuests from one IP passed to dns per one period");
@@ -606,7 +772,6 @@ MODULE_PARM_DESC(forward,
 		 "Use hook NF_INET_FORWARD instead of NF_INET_LOCAL_IN");
 module_param(noop, bool, 0);
 MODULE_PARM_DESC(noop, "No Operations mode");
-
 MODULE_AUTHOR("Daniil Cherednik <dan.cherednik@gmail.com>");
 MODULE_DESCRIPTION("filter DNS requests");
 MODULE_LICENSE("GPL");
